@@ -239,30 +239,21 @@ def fgsm(logits_fn, images, labels, *, epsilon=4 / 255, targeted=False):
 def autoattack(
     logits_fn, images, labels, *, epsilon, seed=0, batch_size=1, version="standard"
 ):
-    """Optional official AutoAttack integration; never installs the dependency.
+    """Tensor-returning convenience call into the audited AutoAttack adapter.
 
-    Requires the upstream ``autoattack`` package. This wrapper is untargeted Linf
-    evaluation; record its installed revision and configuration. It is separate
-    from the PGD implementation above. Do not claim GPU/AutoAttack validation
-    from the toolkit's synthetic PGD tests.
+    logits_fn must now be an eval-mode nn.Module (e.g. UniTokClassifier), so model
+    parameters can be registered/frozen correctly. For metadata, norm selection
+    or custom component budgets use external_attacks.run_autoattack directly.
+    Standard Linf profile here retains upstream defaults; no reduced-budget run
+    is silently substituted. Optional dependencies are never installed implicitly.
     """
-    _check_images(images)
-    if (
-        not math.isfinite(epsilon)
-        or not 0 < epsilon <= 1
-        or type(batch_size) is not int
-        or batch_size < 1
-    ):
-        raise ValueError("Positive pixel epsilon and batch_size required")
-    from autoattack import AutoAttack
+    from .external_attacks import AutoAttackConfig, run_autoattack
 
-    attacker = AutoAttack(
+    return run_autoattack(
         logits_fn,
-        norm="Linf",
-        eps=epsilon,
-        seed=seed,
-        version=version,
-        device=str(images.device),
-        verbose=False,
-    )
-    return attacker.run_standard_evaluation(images, labels, bs=batch_size)
+        images,
+        labels,
+        AutoAttackConfig(
+            epsilon=epsilon, seed=seed, batch_size=batch_size, version=version
+        ),
+    ).images
