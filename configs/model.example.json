@@ -1,0 +1,33 @@
+{
+  "implementation_repo": "external/unitok-sae",
+  "unitok_checkpoint": {
+    "path": "checkpoints/FoundationVision_unitok_tokenizer/unitok_tokenizer.pth",
+    "sha256": "b1e39e3df707c909c81de0affcbf45075d40d9f156ef0e200b037bcc9b6db81a",
+    "provider": "FoundationVision/unitok_tokenizer @ 7f6ea34f2f669d8d250a4376468c69fe4bcb6c65 (report-author-confirmed base)",
+    "state_dict_path": [
+      "trainer",
+      "unitok"
+    ],
+    "strip_module_prefix": false
+  },
+  "model_args_provenance": "FoundationVision/unitok_tokenizer config.json @ 7f6ea34f2f669d8d250a4376468c69fe4bcb6c65 (checkpoint's own stored config); all 17 fields match",
+  "model_args": {
+    "model": "vitamin_large",
+    "img_size": 256,
+    "num_query": 0,
+    "quant_proj": "attn",
+    "vocab_size": 32768,
+    "vocab_width": 64,
+    "num_codebooks": 8,
+    "vq_beta": 0.25,
+    "le": 0.0,
+    "e_temp": 0.01,
+    "embed_dim": 768,
+    "text_width": 768,
+    "text_heads": 12,
+    "text_layers": 12,
+    "text_vocab_size": 49408,
+    "text_context_length": 77,
+    "drop_path": 0.1
+  }
+}

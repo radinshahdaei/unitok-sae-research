@@ -1,0 +1,11 @@
+{
+  "samples": [
+    {
+      "id": "YOUR_STABLE_IMAGE_ID",
+      "path": "../data/YOUR_IMAGE.jpg",
+      "sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
+      "split": "discovery",
+      "label": 0
+    }
+  ]
+}
