@@ -108,6 +108,30 @@ class UniTokSession:
         applies edits before the remaining native encoder and quantizer.
         No hardcoded spatial token count or dictionary width is used.
         """
+        pre, captured = self._encode(images, layers=layers, attachments=attachments)
+        quantized = self.model.quantizer(pre)[0]
+        post = self.model.post_quant_proj(quantized)
+        features = F.normalize(
+            self.model.projection(self.model.fc_norm(post.mean(1))), dim=-1
+        )
+        reconstruction = self.model.decoder(post).float() if decode else None
+        indices = self.model.quantizer.f_to_idx(pre)
+        return ForwardResult(
+            pre, quantized, indices, features, reconstruction, captured
+        )
+
+    def pre_quantization(self, images, *, attachments=None):
+        """Return differentiable [B,T,D] vectors at the native quantizer input.
+
+        Runs the encoder and quant_proj only, with the same optional SAE edits as
+        forward(). It does not execute codebooks, the classification projection,
+        the image decoder or quantizer usage-counter updates. This is the space
+        used by the tokenizer embedding-distance attacks of arXiv:2602.18252v1.
+        """
+        return self._encode(images, attachments=attachments)[0]
+
+    def _encode(self, images, *, layers=(), attachments=None):
+        """Shared encoder path; all temporary SAE hooks are removed on exit."""
         inputs = self._images(images)
         attachments = {} if attachments is None else dict(attachments)
         requested = set(layers) | set(attachments)
@@ -182,18 +206,9 @@ class UniTokSession:
                     stack.callback(handle.remove)
                 tokens = self.model.encoder(inputs).float()
                 pre = self.model.quant_proj(tokens)
-                quantized = self.model.quantizer(pre)[0]
-                post = self.model.post_quant_proj(quantized)
-                features = F.normalize(
-                    self.model.projection(self.model.fc_norm(post.mean(1))), dim=-1
-                )
-                reconstruction = self.model.decoder(post).float() if decode else None
-                indices = self.model.quantizer.f_to_idx(pre)
             if set(captured) != requested:
                 raise RuntimeError("Forward did not execute all requested layers")
-            return ForwardResult(
-                pre, quantized, indices, features, reconstruction, captured
-            )
+            return pre, captured
         finally:
             self._running = False
 
