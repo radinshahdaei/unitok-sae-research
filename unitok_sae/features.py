@@ -10,7 +10,15 @@ import math
 import torch
 
 
-def edit_features(codes, feature_ids, *, operation="set", value=0.0, token_mask=None):
+def edit_features(
+    codes,
+    feature_ids,
+    *,
+    operation="set",
+    value=0.0,
+    token_mask=None,
+    allow_signed=False,
+):
     """Set/add/scale selected codes, optionally at selected tokens.
 
     Args:
@@ -22,7 +30,8 @@ def edit_features(codes, feature_ids, *, operation="set", value=0.0, token_mask=
         token_mask: Optional bool tensor broadcastable to ``[B,T,1]``. For a
             length-T mask pass ``mask[None,:,None]``. True selects edited tokens.
 
-    Values must stay nonnegative, consistent with the nonnegative SAE codes.
+    Values must stay nonnegative unless allow_signed=True for a signed dictionary
+    such as AbsTopK. The session independently checks the attached SAE's contract.
     """
     if codes.ndim != 3 or not torch.isfinite(codes).all():
         raise ValueError("Expected finite [B,T,F] codes")
@@ -47,20 +56,29 @@ def edit_features(codes, feature_ids, *, operation="set", value=0.0, token_mask=
         if token_mask.dtype != torch.bool:
             raise ValueError("token_mask must be boolean")
         selected = torch.where(token_mask.to(codes.device), selected, previous)
-    if not torch.isfinite(selected).all() or (selected < 0).any():
-        raise ValueError("Edited feature values must be finite and nonnegative")
+    if not torch.isfinite(selected).all() or (
+        not allow_signed and ((selected < 0).any() or (codes < 0).any())
+    ):
+        raise ValueError(
+            "Signed values require allow_signed=True; all values must be finite"
+        )
     result = codes.clone()
     result[..., ids] = selected
     return result
 
 
-def top_features(codes, *, count=10, reduction="mean"):
-    """Return per-image (values, IDs), aggregated over tokens; IDs are layer-local."""
+def top_features(codes, *, count=10, reduction="mean", absolute=False):
+    """Rank by signed values or absolute magnitudes over tokens; IDs are layer-local.
+
+    absolute=True avoids missing large negative AbsTopK features. Returned ranking
+    values then describe magnitudes; inspect original codes for each feature's sign.
+    """
     if codes.ndim != 3 or not 1 <= count <= codes.shape[-1]:
         raise ValueError("Expected [B,T,F] and a valid feature count")
     if reduction not in {"mean", "max"}:
         raise ValueError("reduction must be mean or max")
-    aggregate = codes.mean(1) if reduction == "mean" else codes.amax(1)
+    values = codes.abs() if absolute else codes
+    aggregate = values.mean(1) if reduction == "mean" else values.amax(1)
     return aggregate.topk(count, dim=-1)
 
 

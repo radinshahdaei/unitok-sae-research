@@ -1,9 +1,10 @@
 """Bounded SAE training primitives; no model training starts on import.
 
 Use a token DataLoader over a discovery-only activation dataset. The caller owns
-seeds, shuffling, data splits, device and training budget. These baseline variants
-use normalized decoder columns and no dead-feature auxiliary/revival loss. The
-original pretrained SAE implementation remains available separately.
+seeds, shuffling, data splits, device and training budget. Families share normalized
+decoder columns, with optional AuxK for nonnegative Top-K families. No automatic
+dead-neuron resampling is performed. The original pretrained implementation stays
+separate. See docs/sae-variants.md for exact objective/recipe differences.
 """
 
 import math
@@ -14,12 +15,24 @@ import torch
 from .sae import SAEConfig, SparseAutoencoder
 
 
-def train_step(sae, activations, optimizer, *, max_grad_norm=1.0):
+def train_step(
+    sae,
+    activations,
+    optimizer,
+    *,
+    max_grad_norm=1.0,
+    sparsity_scale=1.0,
+    sparsity_p=1.0,
+    training_k=None,
+):
     """Take one optimizer step and return detached scalar training diagnostics.
 
     Input must be frozen activations, on the SAE device. This never backprops
     into UniTok. BatchTopK pooling includes every vector in this batch. Any
     previously calibrated inference threshold is invalidated by a weight update.
+    sparsity_scale warms the L1/Lp/L0 penalty; sparsity_p<1 is a smoothed Lp^p
+    penalty for ReLU/Gated. training_k overrides the current Top-K training budget.
+    AuxK counters advance only on a successful step and count nonzero codes.
     """
     if not math.isfinite(max_grad_norm) or max_grad_norm <= 0:
         raise ValueError("max_grad_norm must be positive and finite")
@@ -27,7 +40,12 @@ def train_step(sae, activations, optimizer, *, max_grad_norm=1.0):
         raise ValueError("Nonfinite training activations")
     sae.train()
     optimizer.zero_grad(set_to_none=True)
-    output = sae(activations.detach())
+    output = sae(
+        activations.detach(),
+        sparsity_scale=sparsity_scale,
+        sparsity_p=sparsity_p,
+        training_k=training_k,
+    )
     if not torch.isfinite(output["loss"]):
         raise ValueError("Nonfinite training loss")
     output["loss"].backward()
@@ -37,23 +55,43 @@ def train_step(sae, activations, optimizer, *, max_grad_norm=1.0):
     )
     optimizer.step()
     sae.normalize_decoder()
+    sae.record_activity(output["latent"].detach())
     if hasattr(sae, "threshold_calibrated"):
         sae.threshold_calibrated.fill_(False)
     codes = output["latent"].detach()
     return {
         "loss": float(output["loss"].detach()),
         "mse": float(output["recon_loss"].detach()),
-        "l0": float((codes > 0).float().sum(-1).mean()),
+        "l0": float((codes != 0).float().sum(-1).mean()),
         "gradient_norm": float(norm),
+        "sparsity_scale": sparsity_scale,
+        "sparsity_p": sparsity_p,
+        "training_k": training_k,
+        "sparsity_loss": float(output["sparsity_loss"].detach()),
+        "aux_loss": float(output["aux_loss"].detach()),
+        "gated_aux_loss": float(output["gated_aux_loss"].detach()),
+        "multitopk_loss": float(output["multitopk_loss"].detach()),
     }
 
 
-def fit(sae, batches, *, max_steps, learning_rate=1e-4, optimizer=None):
+def fit(
+    sae,
+    batches,
+    *,
+    max_steps,
+    learning_rate=1e-4,
+    optimizer=None,
+    schedule=None,
+    start_step=0,
+):
     """Train for at most max_steps from a finite or streaming iterable of tensors.
 
     Returns (history, optimizer); exhausting the iterable ends the call, rather
     than silently restarting an epoch. Pass the returned optimizer for continued
     training. This function does not choose a split, seed, epoch count or device.
+    schedule(step) may return train_step keyword options; start_step is the global
+    optimizer-update cursor for continuation. Save schedule settings and cursor
+    in checkpoint provenance explicitly; no schedule is inferred on restoration.
     """
     if (
         type(max_steps) is not int
@@ -67,14 +105,17 @@ def fit(sae, batches, *, max_steps, learning_rate=1e-4, optimizer=None):
         if optimizer is not None
         else torch.optim.Adam(sae.parameters(), lr=learning_rate)
     )
+    if type(start_step) is not int or start_step < 0:
+        raise ValueError("start_step must be a nonnegative integer")
     history = []
     iterator = iter(batches)
-    for _ in range(max_steps):
+    for step in range(start_step, start_step + max_steps):
         try:
             batch = next(iterator)
         except StopIteration:
             break
-        history.append(train_step(sae, batch, optimizer))
+        options = {} if schedule is None else schedule(step)
+        history.append({"step": step, **train_step(sae, batch, optimizer, **options)})
     return history, optimizer
 
 
@@ -100,13 +141,14 @@ def fidelity(sae, activations):
         )
         sse = (x - y).square().sum()
         variance = (x - x.mean(0)).square().sum()
-        frequency = (codes.reshape(-1, sae.hidden_dim) > 0).float().mean(0)
+        frequency = (codes.reshape(-1, sae.hidden_dim) != 0).float().mean(0)
         return {
             "n_vectors": x.shape[0],
             "mse": float(sse / x.numel()),
             "explained_variance": float(1 - sse / variance) if variance > 0 else None,
             "cosine": float(torch.nn.functional.cosine_similarity(x, y).mean()),
-            "l0": float((codes > 0).float().sum(-1).mean()),
+            "l0": float((codes != 0).float().sum(-1).mean()),
+            "negative_l0": float((codes < 0).float().sum(-1).mean()),
             "inactive_fraction": float((frequency == 0).float().mean()),
         }
     finally:

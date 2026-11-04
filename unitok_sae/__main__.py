@@ -6,6 +6,7 @@ large default jobs. Python API functions remain independently usable.
 
 import argparse
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import torch
@@ -14,7 +15,8 @@ from .data import ActivationDataset, extract_activations, file_sha256
 from .features import edit_features, top_features
 from .loading import checked_asset, load_pretrained_sae, load_unitok
 from .model import SAEAttachment, preprocess_image
-from .sae import SAEConfig, SparseAutoencoder
+from .sae import SAE_VARIANTS, SAEConfig, SparseAutoencoder
+from .schedules import SparsitySchedule
 from .training import fit, load_sae, save_sae
 
 
@@ -57,9 +59,7 @@ def parser():
         if name == "train":
             cmd.add_argument("--manifest", type=Path, required=True)
             cmd.add_argument("--layer", type=int, required=True)
-            cmd.add_argument(
-                "--variant", choices=["relu", "topk", "batchtopk"], required=True
-            )
+            cmd.add_argument("--variant", choices=SAE_VARIANTS, required=True)
             cmd.add_argument("--hidden-dim", type=int, required=True)
             cmd.add_argument("--k", type=int, default=64)
             cmd.add_argument("--l1", type=float, default=0)
@@ -67,6 +67,16 @@ def parser():
             cmd.add_argument("--batch-size", type=int, default=256)
             cmd.add_argument("--learning-rate", type=float, default=1e-4)
             cmd.add_argument("--seed", type=int, default=0)
+            cmd.add_argument(
+                "--sae-options",
+                type=Path,
+                help="JSON family-specific SAEConfig fields, e.g. prefixes or l0_coefficient",
+            )
+            cmd.add_argument(
+                "--schedule",
+                type=Path,
+                help="JSON SparsitySchedule fields; saved with checkpoint provenance",
+            )
             continue
         cmd.add_argument("--config", type=Path, required=True)
         cmd.add_argument("--images", type=Path, required=True)
@@ -116,15 +126,33 @@ def main(argv=None):
     if args.command == "train":
         torch.manual_seed(args.seed)
         dataset = ActivationDataset(args.manifest, layer=args.layer, split="discovery")
-        sae = SparseAutoencoder(
-            SAEConfig(dataset.input_dim, args.hidden_dim, args.variant, args.k, args.l1)
-        ).to(args.device)
+        options = (
+            {} if args.sae_options is None else json.loads(args.sae_options.read_text())
+        )
+        fixed = {"input_dim", "hidden_dim", "variant", "k", "l1_coefficient"}
+        if fixed.intersection(options):
+            raise ValueError(
+                "sae-options cannot override explicit CLI architecture/L1 arguments"
+            )
+        config_sae = SAEConfig(
+            dataset.input_dim, args.hidden_dim, args.variant, args.k, args.l1, **options
+        )
+        schedule = (
+            None
+            if args.schedule is None
+            else SparsitySchedule(**json.loads(args.schedule.read_text()))
+        )
+        sae = SparseAutoencoder(config_sae).to(args.device)
         loader = torch.utils.data.DataLoader(
             dataset, batch_size=args.batch_size, shuffle=False
         )
         batches = (x.to(args.device) for x in loader)
         history, optimizer = fit(
-            sae, batches, max_steps=args.steps, learning_rate=args.learning_rate
+            sae,
+            batches,
+            max_steps=args.steps,
+            learning_rate=args.learning_rate,
+            schedule=schedule,
         )
         # One finite pass only; no implicit epochs. Threshold remains uncalibrated
         # for BatchTopK until explicitly fit on a separate calibration panel.
@@ -138,6 +166,7 @@ def main(argv=None):
                 "settings": settings,
                 "manifest_sha256": file_sha256(args.manifest),
                 "toolkit_source_sha256": source_hashes,
+                "schedule": None if schedule is None else asdict(schedule),
             },
         )
         (args.output / "history.json").write_text(json.dumps(history, indent=2) + "\n")
@@ -193,7 +222,11 @@ def main(argv=None):
             None
             if args.features is None
             else lambda z: edit_features(
-                z, args.features, operation=args.operation, value=args.value
+                z,
+                args.features,
+                operation=args.operation,
+                value=args.value,
+                allow_signed=not getattr(sae, "nonnegative_codes", True),
             )
         )
         with torch.inference_mode():
@@ -215,7 +248,9 @@ def main(argv=None):
                         "native_reconstruction": native.reconstruction.cpu(),
                         "edited_reconstruction": result.reconstruction.cpu(),
                         "top_feature_ids": top_features(
-                            state.codes, count=min(10, sae.hidden_dim)
+                            state.codes,
+                            count=min(10, sae.hidden_dim),
+                            absolute=not getattr(sae, "nonnegative_codes", True),
                         ).indices.cpu(),
                     },
                     args.output / f"sample-{i:04d}.pt",

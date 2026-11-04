@@ -36,7 +36,13 @@ def inspect_and_edit(config, images, *, feature_ids, value, grid_shape, device="
         device=device,
     )
     attachment = SAEAttachment(
-        sae, lambda z: edit_features(z, feature_ids, value=value)
+        sae,
+        lambda z: edit_features(
+            z,
+            feature_ids,
+            value=value,
+            allow_signed=not getattr(sae, "nonnegative_codes", True),
+        ),
     )
     with torch.inference_mode():
         native = session.forward(
@@ -45,9 +51,17 @@ def inspect_and_edit(config, images, *, feature_ids, value, grid_shape, device="
         edited = session.forward(images, attachments={config["block"]: attachment})
         codes = native.layers[config["block"]].codes
         spatial = feature_map(codes, feature_ids[0], grid_shape=grid_shape)
-        overlay = feature_overlay(images[0], spatial[0])
+        overlay = feature_overlay(
+            images[0], spatial[0], signed=not getattr(sae, "nonnegative_codes", True)
+        )
         grid = reconstruction_grid(images, native.reconstruction, edited.reconstruction)
-    return native, edited, top_features(codes), overlay, grid
+    return (
+        native,
+        edited,
+        top_features(codes, absolute=not getattr(sae, "nonnegative_codes", True)),
+        overlay,
+        grid,
+    )
 
 
 def train_from_activations(
@@ -62,6 +76,7 @@ def train_from_activations(
     seed,
     device="cpu",
     l1_coefficient=0.0,
+    sae_options=None,
 ):
     """Train a bounded baseline on discovery tokens, calibrate/evaluate separately.
 
@@ -69,19 +84,28 @@ def train_from_activations(
     needs a planned data order, epochs, resource cap and held-out fidelity study.
     BatchTopK calibration uses a bounded 128-token calibration panel here; this
     convenience example makes no claim that this is statistically sufficient.
+    sae_options supplies family-specific fields such as Matryoshka prefixes or
+    JumpReLU l0_coefficient/threshold/bandwidth; see SAEConfig's docstring.
     """
     torch.manual_seed(seed)
     discovery = ActivationDataset(manifest, layer=layer, split="discovery")
     calibration = ActivationDataset(manifest, layer=layer, split="calibration")
     sae = SparseAutoencoder(
-        SAEConfig(discovery.input_dim, hidden_dim, variant, k, l1_coefficient)
+        SAEConfig(
+            discovery.input_dim,
+            hidden_dim,
+            variant,
+            k,
+            l1_coefficient,
+            **({} if sae_options is None else sae_options),
+        )
     ).to(device)
     loader = torch.utils.data.DataLoader(discovery, batch_size=256, shuffle=False)
     history, optimizer = fit(sae, (x.to(device) for x in loader), max_steps=max_steps)
     panel = torch.stack([calibration[i] for i in range(min(128, len(calibration)))]).to(
         device
     )
-    if variant == "batchtopk":
+    if variant in {"batchtopk", "matryoshka"}:
         sae.calibrate_threshold(panel)
     scores = fidelity(sae, panel)
     save_sae(
@@ -94,6 +118,7 @@ def train_from_activations(
             "activation_manifest": str(manifest),
             "seed": seed,
             "purpose": "bounded recipe",
+            "sae_config": sae.metadata(),
         },
     )
     return sae.eval(), history, scores

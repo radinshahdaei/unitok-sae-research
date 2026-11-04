@@ -27,12 +27,14 @@ def reconstruction_grid(images, baseline, edited):
     return to_pil_image(torch.cat(rows, dim=-2))
 
 
-def feature_overlay(image, spatial_map, *, opacity=0.5, maximum=None):
+def feature_overlay(image, spatial_map, *, opacity=0.5, maximum=None, signed=False):
     """Return a red heatmap over one CHW [0,1] image and explicit HxW feature map.
 
     ``maximum`` can be frozen across images for comparable intensity. Without it
     each overlay normalizes independently and is unsuitable for magnitude
     comparisons. Map geometry must be validated at the model hook beforehand.
+    signed=True uses red for positive and blue for negative coefficients, with
+    magnitude controlling opacity. Use this explicitly for AbsTopK maps.
     """
     from torchvision.transforms.functional import to_pil_image
 
@@ -43,7 +45,7 @@ def feature_overlay(image, spatial_map, *, opacity=0.5, maximum=None):
         or not 0 <= opacity <= 1
         or not torch.isfinite(image).all()
         or not torch.isfinite(spatial_map).all()
-        or (spatial_map < 0).any()
+        or (not signed and (spatial_map < 0).any())
     ):
         raise ValueError(
             "Expected RGB image and nonnegative finite spatial feature map"
@@ -54,10 +56,11 @@ def feature_overlay(image, spatial_map, *, opacity=0.5, maximum=None):
         mode="bilinear",
         align_corners=False,
     )[0]
-    maximum = float(heat.max()) if maximum is None else float(maximum)
+    maximum = float(heat.abs().max()) if maximum is None else float(maximum)
     if not torch.isfinite(torch.tensor(maximum)) or maximum < 0:
         raise ValueError("maximum must be finite and nonnegative")
-    alpha = (heat / max(maximum, 1e-12)).clamp(0, 1) * opacity
+    alpha = (heat.abs() / max(maximum, 1e-12)).clamp(0, 1) * opacity
     red = torch.zeros_like(image, device="cpu")
-    red[0] = 1
+    red[0] = (heat[0] >= 0).to(red.dtype)
+    red[2] = (heat[0] < 0).to(red.dtype)
     return to_pil_image((image.detach().cpu() * (1 - alpha) + red * alpha).clamp(0, 1))

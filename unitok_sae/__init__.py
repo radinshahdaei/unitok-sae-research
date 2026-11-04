@@ -8,7 +8,8 @@ boundary are float RGB BCHW tensors in [0, 1], unlike upstream's [-1, 1].
 
 from .features import edit_features, feature_map, top_features
 from .model import ForwardResult, LayerState, SAEAttachment, UniTokSession
-from .sae import SAEConfig, SparseAutoencoder
+from .sae import SAE_VARIANTS, SAEConfig, SparseAutoencoder
+from .schedules import SparsitySchedule
 
 __all__ = [
     "UniTokSession",
@@ -17,6 +18,8 @@ __all__ = [
     "LayerState",
     "SparseAutoencoder",
     "SAEConfig",
+    "SAE_VARIANTS",
+    "SparsitySchedule",
     "edit_features",
     "feature_map",
     "top_features",

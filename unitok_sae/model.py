@@ -154,10 +154,13 @@ class UniTokSession:
                     or changed.dtype != state.codes.dtype
                     or changed.device != state.codes.device
                     or not torch.isfinite(changed).all()
-                    or (changed < 0).any()
+                    or (
+                        getattr(spec.sae, "nonnegative_codes", True)
+                        and (changed < 0).any()
+                    )
                 ):
                     raise ValueError(
-                        "Edit must return finite nonnegative codes with unchanged shape/dtype/device"
+                        "Edit must preserve shape/dtype/device and the SAE's finite/sign contract"
                     )
                 state.edited_activation = (
                     activation + spec.sae.decoder(changed - state.codes)
