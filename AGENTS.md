@@ -41,3 +41,8 @@ do not copy private reports or assets into it.
 - Check a change with the smallest relevant example or manual computation.
   Explain what ran and what it establishes; add a focused test only when useful.
   Development regression tests remain in the private workspace and Git history.
+- Use `docs/experiment-loop.md` for short falsifiable experiments: inspect actual
+  outcomes, reject ineffective variants and freeze a promising procedure before
+  fresh confirmation. A frozen support with evaluation attack donors is still an
+  oracle test. Keep resource use within the current user's authorization and the
+  host's policies; every job needs a finite limit and receipt.

@@ -151,6 +151,9 @@ An embedding-distance improvement alone does not establish downstream failure.
 
 ## Running experiments
 
+The [short experiment loop](experiment-loop.md) describes falsifiable pilot
+decisions, oracle versus donor-free edits, controls and confirmation on fresh data.
+
 The recipes are independent functions with explicit inputs. The CLI exposes
 `extract`, `train`, `inspect` and `attack`; use `python -m unitok_sae COMMAND --help`.
 Outputs require new directories. Keep local configs, checkpoints, data and runs

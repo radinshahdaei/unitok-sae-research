@@ -22,6 +22,7 @@ python examples/quickstart.py --output runs/first-sae
 
 The quickstart trains and edits a tiny SAE on synthetic vectors, without model
 weights. For UniTok setup and practical usage, see [the guide](docs/guide.md).
+For an experiment workflow, see [short experiments](docs/experiment-loop.md).
 
 ## Where things live
 
