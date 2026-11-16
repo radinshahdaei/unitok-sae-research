@@ -136,6 +136,37 @@ and matched fixed-span controls. Frozen IDs with per-evaluation-image donor
 values remain an oracle intervention; a mean template requires discovery donors
 only. Match selection budgets separately before comparing learned dictionaries.
 
+## Bounded support search and coefficient fitting
+
+`control.select_support(dictionary, proposals, evaluate, ...)` evaluates explicit
+candidate supports using a caller-supplied hard-forward score. Set finite
+`max_groups`, `max_image_evaluations` and `images_per_group`; the latter must
+include every image forward inside a candidate test, including magnitude probes.
+The function charges the declared cost and cannot instrument hidden work inside
+a callback. Duplicate proposals count toward the proposal limit. Reuse the same
+candidate-generation procedure and resources across dictionaries.
+
+`control.fit_span_edit` fits spatial coefficients and edit magnitude inside one
+frozen orthonormal basis. Supply a neutral initialization, a differentiable
+`objective(edit)` returning `(task_loss, per_image_mse)`, and a separate native
+hard-forward `measure(edit)` returning `(success_bool, per_image_mse)`. Set the
+step limit, norm bound and distortion cap explicitly. The common added penalty is
+`penalty_weight * mean(relu(mse / cap - 1)**2)`. The caller defines the task
+loss, reconstruction reference and raw units identically for every geometry.
+
+The fitter checks the start and declared step intervals, retaining a measured
+iterate feasible on every fitting image when one exists. Otherwise it returns
+the least-violating measured edit with `feasible=False`. Neither a soft penalty
+nor fitting-set feasibility ensures feasibility on new images. Inspect its
+trace and evaluate held-out distortion as an outcome. Magnitude is projected
+after updates to retain its gradient at the maximum norm.
+
+The `fit_template` function in [steering recipes](../examples/steering_recipes.py)
+connects these callbacks to UniTok's native head, differentiable reconstruction
+penalty and hard-token decoding. Freeze model parameters and keep discovery,
+calibration and final images separate. It is a small fitting recipe, not the
+full experiment controller, a reproduced benchmark or a defense.
+
 ## Activation data and SAE training
 
 `data.extract_activations(session, batches, destination, layers=..., provenance=...)`

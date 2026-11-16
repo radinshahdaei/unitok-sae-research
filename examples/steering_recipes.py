@@ -5,7 +5,9 @@ These functions expose experiment mechanics, not a benchmark or semantic claim.
 """
 
 import torch
+from torch.nn import functional as F
 
+from unitok_sae.control import fit_span_edit
 from unitok_sae.steering import (mean_feature_edit, mean_preserving_span,
                                  rotated_dictionary, svd_span)
 
@@ -47,3 +49,40 @@ def apply_template(session, images, *, block, edit):
     if edit.ndim != 2:
         raise ValueError("Expected a fixed [T,D] spatial template")
     return session.forward(images, activation_edits={block: lambda h: h + edit})
+
+
+def fit_template(session, discovery_images, prototypes, *, block, basis,
+                 neutral_edit, target, distortion_cap, max_norm, steps,
+                 penalty_weight=1.0, logit_scale=1.0):
+    """Fit on discovery images with a common native-reconstruction penalty.
+
+    prototypes are normalized [classes,embedding_dim] in recorded class order.
+    logit_scale is an explicit multiplier, held fixed across comparisons. The
+    small recipe runs all discovery images together; profile/batch larger jobs
+    in the caller. Freeze model parameters, use eval mode and enable autograd.
+    Native reconstruction MSE uses raw decoder units, not [0,1] display pixels.
+    """
+    with torch.no_grad():
+        clean = session.forward(discovery_images, decode=False)
+        clean_recon = session.decode_tokens(clean.indices)
+        clean_pred = (clean.image_features @ prototypes.T).argmax(1)
+    labels = torch.full((len(discovery_images),), target, dtype=torch.long,
+                        device=discovery_images.device)
+
+    def objective(edit):
+        result = apply_template(session, discovery_images, block=block, edit=edit)
+        logits = (result.image_features @ prototypes.T) * logit_scale
+        mse = (result.reconstruction - clean_recon).flatten(1).square().mean(1)
+        return F.cross_entropy(logits, labels), mse
+
+    def measure(edit):
+        result = apply_template(session, discovery_images, block=block, edit=edit)
+        hard_recon = session.decode_tokens(result.indices)
+        pred = (result.image_features @ prototypes.T).argmax(1)
+        success = pred.eq(target) & clean_pred.ne(target)
+        mse = (hard_recon - clean_recon).flatten(1).square().mean(1)
+        return success, mse
+
+    return fit_span_edit(basis, neutral_edit, objective, measure,
+                         distortion_cap=distortion_cap, max_norm=max_norm, steps=steps,
+                         penalty_weight=penalty_weight)
