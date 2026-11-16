@@ -100,15 +100,21 @@ class UniTokSession:
             )
         return images * 2 - 1
 
-    def forward(self, images, *, layers=(), attachments=None, decode=True):
+    def forward(self, images, *, layers=(), attachments=None, activation_edits=None, decode=True):
         """Encode/classify, optionally decode and capture/edit arbitrary blocks.
 
         ``layers`` captures native activations without requiring an SAE.
         ``attachments={15: SAEAttachment(sae, edit=...)}`` captures codes and
         applies edits before the remaining native encoder and quantizer.
+        ``activation_edits={15: lambda h: h + edit}`` applies a direct [B,T,D]
+        callback, including spatial templates and non-SAE controls. It cannot
+        share a block with an SAE attachment; compose the intended operation
+        explicitly rather than relying on an implicit order.
         No hardcoded spatial token count or dictionary width is used.
         """
-        pre, captured = self._encode(images, layers=layers, attachments=attachments)
+        pre, captured = self._encode(
+            images, layers=layers, attachments=attachments, activation_edits=activation_edits
+        )
         quantized = self.model.quantizer(pre)[0]
         post = self.model.post_quant_proj(quantized)
         features = F.normalize(
@@ -120,7 +126,7 @@ class UniTokSession:
             pre, quantized, indices, features, reconstruction, captured
         )
 
-    def pre_quantization(self, images, *, attachments=None):
+    def pre_quantization(self, images, *, attachments=None, activation_edits=None):
         """Return differentiable [B,T,D] vectors at the native quantizer input.
 
         Runs the encoder and quant_proj only, with the same optional SAE edits as
@@ -128,13 +134,20 @@ class UniTokSession:
         the image decoder or quantizer usage-counter updates. This is the space
         used by the tokenizer embedding-distance attacks of arXiv:2602.18252v1.
         """
-        return self._encode(images, attachments=attachments)[0]
+        return self._encode(
+            images, attachments=attachments, activation_edits=activation_edits
+        )[0]
 
-    def _encode(self, images, *, layers=(), attachments=None):
+    def _encode(self, images, *, layers=(), attachments=None, activation_edits=None):
         """Shared encoder path; all temporary SAE hooks are removed on exit."""
         inputs = self._images(images)
         attachments = {} if attachments is None else dict(attachments)
-        requested = set(layers) | set(attachments)
+        activation_edits = {} if activation_edits is None else dict(activation_edits)
+        if set(attachments) & set(activation_edits):
+            raise ValueError("An SAE attachment and activation edit cannot share a block")
+        if any(not callable(edit) for edit in activation_edits.values()):
+            raise ValueError("Activation edits must be callable")
+        requested = set(layers) | set(attachments) | set(activation_edits)
         for block in requested:
             if type(block) is not int or not 0 <= block < len(
                 self.model.encoder.blocks
@@ -154,6 +167,16 @@ class UniTokSession:
                     raise ValueError("Expected block output [B,T,D]")
                 state = LayerState(activation=activation, edited_activation=activation)
                 captured[block] = state
+                if block in activation_edits:
+                    changed = activation_edits[block](activation.clone())
+                    if (not isinstance(changed, torch.Tensor)
+                            or changed.shape != activation.shape
+                            or changed.dtype != activation.dtype
+                            or changed.device != activation.device
+                            or not torch.isfinite(changed).all()):
+                        raise ValueError("Activation edit must preserve finite shape/dtype/device")
+                    state.edited_activation = changed
+                    return changed
                 if block not in attachments:
                     return None
                 spec = attachments[block]
@@ -234,7 +257,7 @@ class UniTokSession:
             self.model.post_quant_proj(q.idx_to_f(indices))
         ).float()
 
-    def logits(self, images, text_features, *, attachments=None, use_logit_scale=True):
+    def logits(self, images, text_features, *, attachments=None, activation_edits=None, use_logit_scale=True):
         """Differentiable zero-shot scores, omitting the unused image decoder.
 
         text_features must be normalized [classes,embedding_dim], ordered by the
@@ -242,7 +265,7 @@ class UniTokSession:
         Gradients follow upstream hard-forward/STE-backward quantization.
         """
         features = self.forward(
-            images, attachments=attachments, decode=False
+            images, attachments=attachments, activation_edits=activation_edits, decode=False
         ).image_features
         if (
             text_features.ndim != 2

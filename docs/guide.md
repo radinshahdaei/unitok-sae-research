@@ -104,6 +104,38 @@ Use all 1000 classes for ImageNet. `top_features`, `feature_map` and the
 `visualization` module help inspect codes and decoded edits. A plausible image
 or heatmap does not validate a feature's semantics or explain a prediction.
 
+## Spatial activation steering
+
+A fixed spatial template can edit native activations without requiring SAE
+encoding or nonnegative codes:
+
+```python
+from unitok_sae.steering import svd_span, project_edit
+
+# decoder_columns is [D,F]; neutral_edit is a discovery-fitted [T,D] tensor.
+basis, span_info = svd_span(decoder_columns[:, feature_ids])
+edit, coefficients = project_edit(neutral_edit, basis)
+result = session.forward(images, activation_edits={block: lambda h: h + edit})
+```
+
+Direct callbacks receive a protected copy of `[B,T,D]` and must preserve its
+shape, dtype, device and finite values. They retain gradients and can be passed
+to `forward`, `pre_quantization` or `logits`. An activation callback and an SAE
+attachment cannot share the same block. Later layers see earlier edits.
+
+`steering.mean_feature_edit` averages decoded discovery code changes over images
+while retaining token positions. `mean_preserving_span` keeps a mean direction
+plus up to q-1 centered principal components. `rotated_dictionary` preserves
+column norms and their Gram matrix. `svd_span` keeps actual rank rather than
+completing deficient columns with arbitrary directions. Record its tolerance.
+A span with q directions allows T*q spatial coefficients, and re-encoding an
+edited state can change SAE coordinates outside the selected support.
+
+See [steering recipes](../examples/steering_recipes.py) for donor-free templates
+and matched fixed-span controls. Frozen IDs with per-evaluation-image donor
+values remain an oracle intervention; a mean template requires discovery donors
+only. Match selection budgets separately before comparing learned dictionaries.
+
 ## Activation data and SAE training
 
 `data.extract_activations(session, batches, destination, layers=..., provenance=...)`
