@@ -85,6 +85,21 @@ prototypes = session.text_prototypes(class_names, tokenize,
 logits = session.logits(images, prototypes)
 ```
 
+Audit the supplied prototypes and their exact prompts before an experiment:
+
+```python
+from unitok_sae.classification import audit_classifier
+
+prompts = [f"a photo of a {name}" for name in class_names]
+audit = audit_classifier(prototypes, prompts=prompts, tokens=tokenize(prompts))
+```
+
+The audit reports duplicate prompts, tokenizer collisions, exact/near-duplicate
+prototype rows and prototype self-query failures. It does not rewrite prompts.
+Save the class order, tokenizer identity and templates alongside the audit;
+a later class with an identical prototype cannot win a first-index argmax tie.
+Self-query agreement does not measure image accuracy.
+
 Use all 1000 classes for ImageNet. `top_features`, `feature_map` and the
 `visualization` module help inspect codes and decoded edits. A plausible image
 or heatmap does not validate a feature's semantics or explain a prediction.
