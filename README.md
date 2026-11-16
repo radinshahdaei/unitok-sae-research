@@ -6,9 +6,12 @@ measure changes in classification and native image reconstruction.
 
 The current research question is whether individual and shared pixel attacks
 reveal feature groups that provide repeatable control on unseen inputs.
-The toolkit supports these experiments; useful causal groups and reusable
-steering have yet to be demonstrated. The broader question is how feature
-interpretability, adversarial stability and causal importance relate.
+The toolkit now includes classifier audits, spatial activation templates,
+matched span controls, bounded support evaluation, distortion-aware coefficient
+fitting and per-image paired evaluation. These are reusable methods; this
+repository does not distribute research results or fitted steering tensors.
+The broader question is how feature interpretability, adversarial stability and
+causal importance relate.
 
 ## Getting started
 
@@ -27,10 +30,13 @@ For an experiment workflow, see [short experiments](docs/experiment-loop.md).
 ## Where things live
 
 - `unitok_sae/`: model access, feature edits, SAE families/training, activation
-  datasets, attacks and visualization. Function docstrings describe the APIs.
+  datasets, attacks, classifier audits, steering and evaluation. Function
+  docstrings describe the APIs.
 - `examples/`: small Python recipes to adapt to your own images and checkpoints.
   Start with `toolkit_recipes.py`; the other recipes cover SAE configurations,
-  external attacks and tokenizer objectives.
+  external attacks, tokenizer objectives and spatial steering. See
+  [`steering_recipes.py`](examples/steering_recipes.py) for discovery templates,
+  matched spans, coefficient fitting and held-out evaluation.
 - `configs/`: model and image-manifest templates; local copies stay ignored.
 - `docs/`: [usage](docs/guide.md), [SAE methods](docs/sae-variants.md) and
   [tokenizer objectives](docs/tokenizer-paper-methods.md).

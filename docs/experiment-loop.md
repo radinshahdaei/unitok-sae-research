@@ -71,6 +71,17 @@ label additional selected examples as diagnostics. Each update should say what
 was tested, the result, its limits, resource cost and the next decision. Keep
 private protocols, reports and generated evidence out of public toolkit history.
 
-Available building blocks are in [the guide](guide.md) and
-[toolkit recipes](../examples/toolkit_recipes.py). Selection algorithms and fitted
-steering rules discussed here are experiment designs, not extra implemented APIs.
+Available building blocks are in [the guide](guide.md),
+[toolkit recipes](../examples/toolkit_recipes.py) and
+[steering recipes](../examples/steering_recipes.py). The toolkit implements
+finite candidate-support evaluation, spatial coefficient fitting and per-image
+outcome summaries. Candidate generation, frozen split policies, job management
+and fitted rules remain choices of each experiment.
+
+Compare fixed-edit replay, independent coefficient refitting and fresh support
+selection separately. Fit every geometry with the same task objective, neutral
+initialization information, spatial freedom and reconstruction penalty. Preserve
+mean directions in data-derived controls, use actual-rank spans and verify edits
+against original decoder columns. An advantage under a common distortion cap
+need not imply an advantage at equal realized distortion or on the head alone.
+Report the C/D/R decomposition before interpreting the joint endpoint.

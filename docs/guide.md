@@ -167,6 +167,43 @@ penalty and hard-token decoding. Freeze model parameters and keep discovery,
 calibration and final images separate. It is a small fitting recipe, not the
 full experiment controller, a reproduced benchmark or a defense.
 
+## Held-out steering evaluation
+
+`evaluation.steering_events` reports target classification `C`, reconstruction
+feasibility `D` and their conjunction excluding already-target clean predictions
+(`J_steer`). Already-target images remain in the denominator with zero steering
+credit. Supply decoded-image predictions to obtain a separate round-trip `R`;
+missing measurements are omitted. `J_roundtrip` is `R AND D`, and `J_both` is
+`J_steer AND R`. None of these measures independent image meaning.
+
+```python
+from unitok_sae.evaluation import per_image_scores, summarize_scores
+
+# One ordered flag vector per frozen tensor, each over the SAME held-out images.
+scores = per_image_scores(flags_by_tensor)
+summary = summarize_scores(scores, class_labels, sample_ids=image_ids,
+                           alpha=corrected_alpha_per_tail)
+```
+
+The class-balanced estimate weights classes equally, even with unequal counts.
+It uses one bounded score per unique image and rejects duplicate image IDs.
+For a paired comparison, subtract the two per-image score vectors and pass
+`difference=True`; its [-1,1] range doubles the Hoeffding radius. The returned
+bounds assume independent images conditional on the fixed class frame and
+frozen edits. They do not capture fitting randomness or new-class sampling.
+
+Set alpha explicitly after multiplicity/sequential correction. Use
+`required_effective_n(alternative, margin, alpha=..., beta=...)` before final
+access to assess a proposed design; do not call observed post-evaluation power
+design power. Neither the function nor the recipe chooses a confirmation index.
+
+`evaluate_templates` in [steering recipes](../examples/steering_recipes.py)
+records hard-token reconstructions, raw reconstruction MSE and decoded-image
+recognition separately. Its summary averages fixed edits before computing
+uncertainty. For a large run, batch model work and aggregate the complete saved
+per-image rows before computing one summary; do not average batch confidence
+bounds. Keep final images unopened until tensors, thresholds and analysis freeze.
+
 ## Activation data and SAE training
 
 `data.extract_activations(session, batches, destination, layers=..., provenance=...)`

@@ -8,6 +8,7 @@ import torch
 from torch.nn import functional as F
 
 from unitok_sae.control import fit_span_edit
+from unitok_sae.evaluation import per_image_scores, steering_events, summarize_scores
 from unitok_sae.steering import (mean_feature_edit, mean_preserving_span,
                                  rotated_dictionary, svd_span)
 
@@ -86,3 +87,39 @@ def fit_template(session, discovery_images, prototypes, *, block, basis,
     return fit_span_edit(basis, neutral_edit, objective, measure,
                          distortion_cap=distortion_cap, max_norm=max_norm, steps=steps,
                          penalty_weight=penalty_weight)
+
+
+@torch.no_grad()
+def evaluate_templates(session, images, prototypes, templates, *, block, target,
+                       distortion_cap, sample_ids, labels, alpha):
+    """Score frozen templates on one held-out batch, with one score per image.
+
+    templates is an explicit nonempty sequence of [T,D] edits; no selection or
+    fitting happens here. Returns separate C/D/R events, raw MSE and the primary
+    class-balanced summary. alpha is the caller's corrected per-tail allocation.
+    This short recipe uses one batch; batch large image sets externally, retain
+    stable IDs and aggregate all per-image rows before computing uncertainty.
+    Round-trip images are clamped/rescaled only at the public [0,1] input boundary;
+    distortion is computed on the original raw reconstructions.
+    """
+    if not templates:
+        raise ValueError("At least one frozen edit is required")
+    clean = session.forward(images, decode=False)
+    clean_pred = (clean.image_features @ prototypes.T).argmax(1).tolist()
+    clean_recon = session.decode_tokens(clean.indices)
+    outcomes = []
+    for edit in templates:
+        result = apply_template(session, images, block=block, edit=edit)
+        recon = session.decode_tokens(result.indices)
+        reconstructed = ((recon.float().clamp(-1, 1) + 1) / 2)
+        roundtrip = session.forward(reconstructed, decode=False)
+        mse = (recon - clean_recon).flatten(1).square().mean(1).tolist()
+        events = steering_events(clean_pred,
+                                 (result.image_features @ prototypes.T).argmax(1).tolist(),
+                                 mse, target=target, distortion_cap=distortion_cap,
+                                 roundtrip_pred=(roundtrip.image_features @ prototypes.T)
+                                 .argmax(1).tolist())
+        outcomes.append({**events, "mse": mse})
+    scores = per_image_scores([row["J_steer"] for row in outcomes])
+    return {"outcomes": outcomes, "scores": scores,
+            "summary": summarize_scores(scores, labels, sample_ids=sample_ids, alpha=alpha)}

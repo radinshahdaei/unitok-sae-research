@@ -41,6 +41,10 @@ do not copy private reports or assets into it.
 - Check a change with the smallest relevant example or manual computation.
   Explain what ran and what it establishes; add a focused test only when useful.
   Development regression tests remain in the private workspace and Git history.
+- Reusable classifier audits, spatial edits, span controls, bounded support
+  evaluation, coefficient fitting and paired summaries now live in
+  `unitok_sae/`; see `examples/steering_recipes.py`. Keep campaign-specific
+  protocols, selected supports, result counts and private paths out of this repo.
 - Use `docs/experiment-loop.md` for short falsifiable experiments: inspect actual
   outcomes, reject ineffective variants and freeze a promising procedure before
   fresh confirmation. A frozen support with evaluation attack donors is still an
